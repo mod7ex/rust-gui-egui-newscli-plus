@@ -1,0 +1,12 @@
+[package]
+name = "news_cli"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dotenv = "0.15.0"
+termimad = "0.21.0"
+tokio = {version = "1.25.0", features = ["full"] }
+news_api = { path = "./news_api", features = ["async"] }
