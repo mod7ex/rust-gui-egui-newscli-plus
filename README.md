@@ -1,1 +1,3 @@
-> https://youtu.be/NtUkr_z7l84?t=381
+# GUI with egui
+
+> https://youtu.be/SvFPdgGwzTQ?t=1396

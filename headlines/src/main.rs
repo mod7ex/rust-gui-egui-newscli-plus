@@ -1,5 +1,8 @@
+mod headlines;
+
+use tracing_subscriber;
 use eframe::{
-    run_native, 
+    run_native,
     App,
     Frame,
     NativeOptions,
@@ -7,13 +10,17 @@ use eframe::{
         Context,
         CentralPanel,
         ScrollArea,
-        Vec2, Ui, Separator, TopBottomPanel, Label, Hyperlink, RichText
+        Vec2,
+        Ui,
+        Separator,
+        TopBottomPanel,
+        Label,
+        Hyperlink,
+        RichText, Visuals
     }
 };
 
-mod headlines;
-
-use headlines::{Headlines, PADDING};
+use headlines::{ Headlines, PADDING };
 
 fn render_header(ui: &mut Ui) {
     ui.vertical_centered(|ui| {
@@ -46,26 +53,40 @@ fn render_footer(ctx: &Context) {
 }
 
 impl App for Headlines {
-    fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
+    fn update(&mut self, ctx: &Context, frame: &mut Frame) {
 
-        self.render_top_panel(ctx);
+        if self.config.dark_mode {
+            ctx.set_visuals(Visuals::dark());
+        } else {
+            ctx.set_visuals(Visuals::light());
+        }
 
-        self.configure_fonts(ctx);
+        if !self.is_api_key_initialized {
+            self.render_config(ctx, frame);
+        } else {
+            self.render_top_panel(ctx, frame);
 
-        CentralPanel::default().show(ctx, |ui| {
-            render_header(ui);
-
-            ScrollArea::both().show(ui, |ui| {
-                self.render_news(ui);
+            self.configure_fonts(ctx); // should be called once
+    
+            CentralPanel::default().show(ctx, |ui| {
+                render_header(ui);
+    
+                ScrollArea::both().show(ui, |ui| {
+                    self.render_news(ui);
+                });
+    
+                render_footer(ctx);
             });
-
-            render_footer(ctx);
-        });
+        }
     }
 }
 
 fn main() {
-    let app = Headlines::new();
+    tracing_subscriber::fmt().init();
+
+    let mut app = Headlines::new();
+
+    app.fetch_news();
 
     let mut native_options = NativeOptions::default();
 

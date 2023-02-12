@@ -1,6 +1,6 @@
 [workspace]
 
 members = [
-    "newsapi",
+    "news_api",
     "headlines"
 ]
