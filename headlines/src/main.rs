@@ -1,5 +1,6 @@
 mod headlines;
 
+use headlines::{ Headlines, PADDING };
 use tracing_subscriber;
 use eframe::{
     run_native,
@@ -19,8 +20,6 @@ use eframe::{
         RichText, Visuals
     }
 };
-
-use headlines::{ Headlines, PADDING };
 
 fn render_header(ui: &mut Ui) {
     ui.vertical_centered(|ui| {
@@ -54,7 +53,6 @@ fn render_footer(ctx: &Context) {
 
 impl App for Headlines {
     fn update(&mut self, ctx: &Context, frame: &mut Frame) {
-
         if self.config.dark_mode {
             ctx.set_visuals(Visuals::dark());
         } else {
@@ -64,10 +62,10 @@ impl App for Headlines {
         if !self.is_api_key_initialized {
             self.render_config(ctx, frame);
         } else {
+            self.preload_articles();
+
             self.render_top_panel(ctx, frame);
 
-            self.configure_fonts(ctx); // should be called once
-    
             CentralPanel::default().show(ctx, |ui| {
                 render_header(ui);
     
@@ -86,11 +84,13 @@ fn main() {
 
     let mut app = Headlines::new();
 
-    app.fetch_news();
-
     let mut native_options = NativeOptions::default();
 
     native_options.initial_window_size = Some(Vec2::new(540., 960.));
 
-    run_native("News API", native_options, Box::new(|_| Box::new(app))).unwrap();
+    run_native("News API", native_options, Box::new(|ctx| {
+        app.setup(&ctx.egui_ctx);
+
+        Box::new(app)
+    })).unwrap();
 }

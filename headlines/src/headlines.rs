@@ -1,5 +1,8 @@
 use news_api::NewsAPI;
-use confy;
+use tracing;
+use confy::{ConfyError, self};
+use std::thread::{JoinHandle, self};
+use std::sync::mpsc::{self, Receiver};
 use serde::{Serialize, Deserialize};
 use eframe::{
     Frame,
@@ -17,7 +20,12 @@ use eframe::{
         Hyperlink,
         Align,
         Separator,
-        Button, TopBottomPanel, menu::bar, RichText, Label, Window
+        Button,
+        TopBottomPanel,
+        menu::bar,
+        RichText,
+        Label,
+        Window
     }
 };
 
@@ -45,6 +53,7 @@ pub struct Headlines {
     articles: Vec<NewsCardData>,
     pub config: HeadlinesConfig,
     pub is_api_key_initialized: bool,
+    pub rx: Option<Receiver<NewsCardData>>
 }
 
 impl Headlines {
@@ -54,20 +63,78 @@ impl Headlines {
         Headlines {
             is_api_key_initialized: !config.api_key.is_empty(),
             articles: vec![],
-            config
+            config,
+            rx: None
         }
     }
 
-    pub fn fetch_news(&mut self) {
-        let api_key = &self.config.api_key;
+    pub fn setup(&mut self, ctx: &Context) {
+        // what should be called once
 
-        if let Ok(response) = NewsAPI::new(api_key).fetch() {
-            for a in response.articles() {
-                self.articles.push(NewsCardData {
-                    title: a.title().to_owned(),
-                    url: a.url().to_owned(),
-                    description: a.description().map(|s| s.to_string()).unwrap_or("...".to_string())
-                });
+        if !self.config.api_key.is_empty() {
+            self.fetch_news();
+        }
+
+        self.configure_fonts(ctx);
+    }
+
+    pub fn fetch_news(&mut self) -> JoinHandle<()> {
+        let api_key = self.config.api_key.clone();
+
+        let (tx, rx) = mpsc::channel();
+
+        let (app_tx, app_rx) = mpsc::sync_channel(1);
+
+        let handler = thread::spawn(move || {
+            if !api_key.is_empty() {
+                if let Ok(response) = NewsAPI::new(&api_key).fetch() {
+
+                    for ar in response.articles() {
+                        if let Err(e) = tx.send(NewsCardData {
+                            title: ar.title().to_owned(),
+                            url: ar.url().to_owned(),
+                            description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
+                        }) {
+                            tracing::error!("Error sending news data {}", e);
+                        }
+                    }
+                } else {
+                    tracing::error!("failed fetching news");
+                }
+            } else {
+                loop {
+                    match app_rx.recv() {
+                        Ok(Msg::ApiKeySet(api_key)) => {
+                            fetch_news(&api_key, &mut news_tx);
+                        }
+                        Err(e) => {
+                            tracing::error!("failed receiving msg: {}", e);
+                        }
+                    }
+                }
+            }
+        });
+
+        self.rx = Some(rx);
+
+        self.app_tx = Some(app_tx);
+
+        handler
+
+        /* self.articles.push(NewsCardData {
+            title: ar.title().to_owned(),
+            url: ar.url().to_owned(),
+            description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
+        }); */
+    }
+
+    pub fn preload_articles(&mut self) {
+        if let Some(rx) = &self.rx {
+            match rx.try_recv() {
+                Ok(news_card) => {
+                    self.articles.push(news_card);
+                },
+                Err(_) => { tracing::error!("Error receiving msg") }
             }
         }
     }
@@ -162,7 +229,16 @@ impl Headlines {
                             "🌙"
                         }
                     ).heading())).clicked() {
-                        self.config.dark_mode = !self.config.dark_mode;
+                        let new_mode = !self.config.dark_mode;
+                        if let Err(e) = self.save_config(HeadlinesConfig {
+                            dark_mode: new_mode,
+                            api_key: self.config.api_key.to_owned(),
+                        }) {
+                            tracing::error!("Failed saving app config {}", e);
+                        } else {
+                            self.config.dark_mode = new_mode;
+                            tracing::info!("theme mode changed");
+                        }
                     };
                 });
             });
@@ -179,7 +255,7 @@ impl Headlines {
             let text_input = ui.text_edit_singleline(&mut self.config.api_key);
 
             if text_input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Err(e) = confy::store(APP_NAME, None, HeadlinesConfig {
+                if let Err(e) = self.save_config(HeadlinesConfig {
                     dark_mode: self.config.dark_mode,
                     api_key: self.config.api_key.to_owned(),
                 }) {
@@ -199,5 +275,9 @@ impl Headlines {
 
             ui.add(Hyperlink::from_label_and_url(url, "https://newsapi.org"));
         });
+    }
+
+    fn save_config(&self, cfg: HeadlinesConfig) -> Result<(), ConfyError>{
+        confy::store(APP_NAME, None, cfg)
     }
 }
