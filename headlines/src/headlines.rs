@@ -1,8 +1,8 @@
 use news_api::NewsAPI;
 use tracing;
 use confy::{ConfyError, self};
-use std::thread::{JoinHandle, self};
-use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use serde::{Serialize, Deserialize};
 use eframe::{
     Frame,
@@ -53,7 +53,25 @@ pub struct Headlines {
     articles: Vec<NewsCardData>,
     pub config: HeadlinesConfig,
     pub is_api_key_initialized: bool,
-    pub rx: Option<Receiver<NewsCardData>>
+    pub rx: Option<Receiver<NewsCardData>>,
+    pub app_tx: Option<SyncSender<String>>
+}
+
+fn fetch_news(api_key: &str, tx: Sender<NewsCardData>) {
+    if let Ok(response) = NewsAPI::new(api_key).fetch() {
+
+        for ar in response.articles() {
+            if let Err(e) = tx.send(NewsCardData {
+                title: ar.title().to_owned(),
+                url: ar.url().to_owned(),
+                description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
+            }) {
+                tracing::error!("Error sending news data {}", e);
+            }
+        }
+    } else {
+        tracing::error!("failed fetching news");
+    }
 }
 
 impl Headlines {
@@ -64,48 +82,36 @@ impl Headlines {
             is_api_key_initialized: !config.api_key.is_empty(),
             articles: vec![],
             config,
-            rx: None
+            rx: None,
+            app_tx: None
         }
     }
 
     pub fn setup(&mut self, ctx: &Context) {
         // what should be called once
 
-        if !self.config.api_key.is_empty() {
-            self.fetch_news();
-        }
-
-        self.configure_fonts(ctx);
-    }
-
-    pub fn fetch_news(&mut self) -> JoinHandle<()> {
         let api_key = self.config.api_key.clone();
 
         let (tx, rx) = mpsc::channel();
 
-        let (app_tx, app_rx) = mpsc::sync_channel(1);
+        let (app_tx, app_rx) = mpsc::sync_channel::<String>(1);
 
-        let handler = thread::spawn(move || {
+        self.rx = Some(rx);
+
+        self.app_tx = Some(app_tx);
+
+        thread::spawn(move || {
             if !api_key.is_empty() {
-                if let Ok(response) = NewsAPI::new(&api_key).fetch() {
-
-                    for ar in response.articles() {
-                        if let Err(e) = tx.send(NewsCardData {
-                            title: ar.title().to_owned(),
-                            url: ar.url().to_owned(),
-                            description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
-                        }) {
-                            tracing::error!("Error sending news data {}", e);
-                        }
-                    }
-                } else {
-                    tracing::error!("failed fetching news");
-                }
+                fetch_news(&api_key, tx);
             } else {
+                tracing::info!("No API-Key was found waiting for API-Key to be set...");
                 loop {
+                    let tx_copy = tx.clone();
+
                     match app_rx.recv() {
-                        Ok(Msg::ApiKeySet(api_key)) => {
-                            fetch_news(&api_key, &mut news_tx);
+                        Ok(rcv_api_key) => {
+                            tracing::info!("Received api key, fetching news...");
+                            fetch_news(&rcv_api_key, tx_copy);
                         }
                         Err(e) => {
                             tracing::error!("failed receiving msg: {}", e);
@@ -115,17 +121,15 @@ impl Headlines {
             }
         });
 
-        self.rx = Some(rx);
+        self.configure_fonts(ctx);
 
-        self.app_tx = Some(app_tx);
-
-        handler
-
-        /* self.articles.push(NewsCardData {
+        /*
+        self.articles.push(NewsCardData {
             title: ar.title().to_owned(),
             url: ar.url().to_owned(),
             description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
-        }); */
+        });
+        */
     }
 
     pub fn preload_articles(&mut self) {
@@ -264,6 +268,9 @@ impl Headlines {
                 } else {
                     self.is_api_key_initialized = true;
                     tracing::info!("api key set");
+                    if let Some(tx) = &self.app_tx {
+                        tx.send(self.config.api_key.to_owned()).unwrap();
+                    }
                 }
             }
 
