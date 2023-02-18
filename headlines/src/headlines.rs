@@ -54,23 +54,24 @@ pub struct Headlines {
     pub config: HeadlinesConfig,
     pub is_api_key_initialized: bool,
     pub rx: Option<Receiver<NewsCardData>>,
+    pub tx: Option<Sender<NewsCardData>>,
     pub app_tx: Option<SyncSender<String>>
 }
 
 fn fetch_news(api_key: &str, tx: Sender<NewsCardData>) {
-    if let Ok(response) = NewsAPI::new(api_key).fetch() {
-
-        for ar in response.articles() {
-            if let Err(e) = tx.send(NewsCardData {
-                title: ar.title().to_owned(),
-                url: ar.url().to_owned(),
-                description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
-            }) {
-                tracing::error!("Error sending news data {}", e);
+    match NewsAPI::new(api_key).fetch() {
+        Ok(response) => {
+            for ar in response.articles() {
+                if let Err(e) = tx.send(NewsCardData {
+                    title: ar.title().to_owned(),
+                    url: ar.url().to_owned(),
+                    description: ar.description().map(|s| s.to_string()).unwrap_or("...".to_string())
+                }) {
+                    tracing::error!("Error sending news data {}", e);
+                }
             }
-        }
-    } else {
-        tracing::error!("failed fetching news");
+        },
+        Err(e) => { tracing::error!("failed fetching news {}", e); }
     }
 }
 
@@ -83,6 +84,7 @@ impl Headlines {
             articles: vec![],
             config,
             rx: None,
+            tx: None,
             app_tx: None
         }
     }
@@ -97,6 +99,8 @@ impl Headlines {
         let (app_tx, app_rx) = mpsc::sync_channel::<String>(1);
 
         self.rx = Some(rx);
+
+        self.tx = Some(tx.clone());
 
         self.app_tx = Some(app_tx);
 
@@ -224,7 +228,16 @@ impl Headlines {
                         frame.close();
                     };
                     if ui.add(Button::new(RichText::new("🔄").heading())).clicked() {
-                        todo!();
+                        if let Some(tx) = &self.tx {
+                            self.articles.clear();
+                            let api_key = self.config.api_key.clone();
+                            let refresh_tx = tx.clone();
+                            thread::spawn(move|| {
+                                thread::sleep(std::time::Duration::from_millis(1000));
+                                fetch_news(&api_key, refresh_tx);
+                            });
+                        }
+
                     };
                     if ui.add(Button::new(RichText::new(
                         if self.config.dark_mode {

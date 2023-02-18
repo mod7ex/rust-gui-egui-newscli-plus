@@ -62,6 +62,8 @@ impl App for Headlines {
         if !self.is_api_key_initialized {
             self.render_config(ctx, frame);
         } else {
+            ctx.request_repaint();
+            
             self.preload_articles();
 
             self.render_top_panel(ctx, frame);
