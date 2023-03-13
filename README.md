@@ -1,3 +1,1 @@
-# GUI with egui
-
-> https://youtu.be/SvFPdgGwzTQ?t=2014
+# GUI App with egui
